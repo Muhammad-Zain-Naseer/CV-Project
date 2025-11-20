@@ -1,0 +1,372 @@
+
+============================================================
+Cell 0 (markdown): # CS436 Computer Vision Project - Week 1 Deliverable
+============================================================
+# CS436 Computer Vision Project - Week 1 Deliverable
+
+
+**Student:** Muhammad Zain Naseer , Kousar Pervaiz
+
+
+
+============================================================
+Cell 1 (code): 
+============================================================
+
+
+============================================================
+Cell 2 (markdown): ## 1. Load Image Dataset
+============================================================
+## 1. Load Image Dataset
+
+
+
+============================================================
+Cell 3 (code): 
+============================================================
+26 images
+
+
+============================================================
+Cell 4 (code): 
+============================================================
+Loaded 26 images successfully
+Image shape: (8160, 6120, 3)
+
+
+============================================================
+Cell 5 (markdown): ## 2. Display Image Grid (10 Images)
+============================================================
+## 2. Display Image Grid (10 Images)
+
+Displaying a grid of 10 images from the dataset to show the variety of viewpoints.
+
+============================================================
+Cell 6 (code): def display_image_grid(images, n_images, cols):
+============================================================
+
+
+============================================================
+Cell 7 (markdown): ## 3. Image Preprocessing
+============================================================
+## 3. Image Preprocessing
+
+
+
+============================================================
+Cell 8 (code): def preprocess_image(img, target_width=1920, convert_to_gray=True):
+============================================================
+Original image shape: (8160, 6120, 3)
+Preprocessed 26 images
+Preprocessed image shape: (2560, 1920)
+Image is now grayscale: True
+
+
+============================================================
+Cell 9 (markdown): ## 4. Feature Detection and Matching
+============================================================
+## 4. Feature Detection and Matching
+
+Using SIFT (Scale-Invariant Feature Transform) to detect and match features between consecutive images.
+
+### 4.1 Feature Detection Setup
+
+============================================================
+Cell 10 (code): 
+============================================================
+Feature detector and matcher initialized
+
+
+============================================================
+Cell 11 (markdown): ### 4.2 Detect Features in All Images
+============================================================
+### 4.2 Detect Features in All Images
+
+============================================================
+Cell 12 (code): # Detect features in all images AND keep color versions
+============================================================
+
+Total images processed: 26
+Color images stored: 26
+
+
+============================================================
+Cell 13 (markdown): ### 4.3 Visualize Keypoints on Sample Image
+============================================================
+### 4.3 Visualize Keypoints on Sample Image
+
+============================================================
+Cell 14 (code): 
+============================================================
+
+
+============================================================
+Cell 15 (markdown): ## 5. Feature Matching Between Consecutive Images
+============================================================
+## 5. Feature Matching Between Consecutive Images
+
+Matching features between 4-5 consecutive image pairs using Lowe's ratio test.
+
+============================================================
+Cell 16 (code): def match_features(desc1, desc2, ratio_thresh=0.7):
+============================================================
+
+
+============================================================
+Cell 17 (markdown): ### 5.1 Match Features Between 4-5 Consecutive Image Pairs
+============================================================
+### 5.1 Match Features Between 4-5 Consecutive Image Pairs
+
+============================================================
+Cell 18 (code): 
+============================================================
+Matching features between 5 consecutive image pairs
+
+
+--- Matching Image 0 and Image 1 ---
+Found 1184 good matches
+
+--- Matching Image 1 and Image 2 ---
+Found 1087 good matches
+
+--- Matching Image 2 and Image 3 ---
+Found 818 good matches
+
+--- Matching Image 3 and Image 4 ---
+Found 962 good matches
+
+--- Matching Image 4 and Image 5 ---
+Found 1064 good matches
+
+
+============================================================
+Cell 19 (markdown): ---
+============================================================
+---
+
+# Week 2: Two-View Reconstruction
+
+Now we'll use the first two images to perform 3D reconstruction.
+
+============================================================
+Cell 20 (code): # Select the first two images for reconstruction
+============================================================
+
+============================================================
+WEEK 2: TWO-VIEW RECONSTRUCTION
+============================================================
+
+Using Image 0 and Image 1 for reconstruction
+Image 1: 8729 keypoints
+Image 2: 10000 keypoints
+Found 1369 matches
+
+
+============================================================
+Cell 21 (code): # Parameter tuning - MORE AGGRESSIVE PARAMETERS
+============================================================
+Testing parameter combinations...
+
+New best: 604 points | ratio=0.75, ransac=1.0, reproj=10.0
+New best: 685 points | ratio=0.75, ransac=1.5, reproj=10.0
+New best: 732 points | ratio=0.75, ransac=2.0, reproj=10.0
+New best: 858 points | ratio=0.75, ransac=3.0, reproj=10.0
+New best: 928 points | ratio=0.8, ransac=3.0, reproj=10.0
+New best: 936 points | ratio=0.8, ransac=3.0, reproj=15.0
+New best: 989 points | ratio=0.85, ransac=3.0, reproj=10.0
+
+
+============================================================
+Cell 22 (markdown): ## 1. Camera Intrinsic Matrix Estimation
+============================================================
+## 1. Camera Intrinsic Matrix Estimation
+
+Since we don't have calibration data, estimate K from image dimensions.
+
+============================================================
+Cell 23 (code): from PIL import Image
+============================================================
+
+=== Camera Intrinsic Matrix K (from EXIF) ===
+Camera: samsung Galaxy S23
+Focal length: 5.4mm (35mm equivalent: 23mm)
+Original image size: 8160x6120
+
+Camera Intrinsic Matrix K:
+[[1.22666667e+03 0.00000000e+00 9.60000000e+02]
+ [0.00000000e+00 1.22666667e+03 1.28000000e+03]
+ [0.00000000e+00 0.00000000e+00 1.00000000e+00]]
+
+Focal length: 1226.67 pixels
+Principal point: (960.00, 1280.00)
+
+
+============================================================
+Cell 24 (markdown): ## 2. Essential Matrix Estimation
+============================================================
+## 2. Essential Matrix Estimation
+
+Compute Essential matrix using RANSAC to filter outliers.
+
+============================================================
+Cell 25 (code): # Extract matched point coordinates
+============================================================
+
+=== Essential Matrix Estimation ===
+Using 904 matched points
+
+Essential Matrix E:
+[[-0.00601122 -0.54676217 -0.07877923]
+ [ 0.58186216 -0.002865   -0.39626448]
+ [ 0.07523367  0.43967313  0.0154578 ]]
+
+Inliers after RANSAC: 435 / 904
+Inlier ratio: 48.12%
+
+
+============================================================
+Cell 26 (markdown): ## 3. Camera Pose Recovery
+============================================================
+## 3. Camera Pose Recovery
+
+Recover rotation R and translation t from Essential matrix.
+
+============================================================
+Cell 27 (code): print("\n=== Camera Pose Recovery ===")
+============================================================
+
+=== Camera Pose Recovery ===
+
+Rotation Matrix R:
+[[ 0.99658418 -0.02240907  0.07948467]
+ [ 0.02063486  0.9995208   0.02307302]
+ [-0.07996362 -0.02135405  0.99656903]]
+
+Translation Vector t:
+[-0.62419361  0.09383685 -0.77561394]
+
+Number of points in front of both cameras: 435
+
+Determinant of R (should be ~1): 1.000000
+R is orthogonal: True
+
+
+============================================================
+Cell 28 (markdown): ## 4. 3D Point Triangulation
+============================================================
+## 4. 3D Point Triangulation
+
+Triangulate 3D points from two camera views.
+
+============================================================
+Cell 29 (code): print("\n=== 3D Point Triangulation ===")
+============================================================
+
+=== 3D Point Triangulation ===
+Projection Matrix P1 (Camera 1):
+[[1.22666667e+03 0.00000000e+00 9.60000000e+02 0.00000000e+00]
+ [0.00000000e+00 1.22666667e+03 1.28000000e+03 0.00000000e+00]
+ [0.00000000e+00 0.00000000e+00 1.00000000e+00 0.00000000e+00]]
+
+Projection Matrix P2 (Camera 2):
+[[ 1.14571151e+03 -4.79883447e+01  1.05420746e+03 -1.51026687e+03]
+ [-7.70413429e+01  1.19874567e+03  1.30391126e+03 -8.77679304e+02]
+ [-7.99636240e-02 -2.13540531e-02  9.96569026e-01 -7.75613942e-01]]
+
+Triangulating 435 points...
+Generated 435 3D points
+
+3D points statistics:
+X range: [-2.52, 2.16]
+Y range: [-3.44, 4.09]
+Z range: [3.95, 14.48]
+
+
+============================================================
+Cell 30 (markdown): ## 5. Filter Valid 3D Points
+============================================================
+## 5. Filter Valid 3D Points
+
+Remove outliers based on depth and reprojection error.
+
+============================================================
+Cell 31 (code): def filter_points(points_3d, pts1, pts2, R, t, K, max_reproj_error=5.0, max_dept
+============================================================
+
+=== Filtering 3D Points ===
+Valid points after filtering: 435 / 435
+Filtered ratio: 100.00%
+
+Filtered 3D points statistics:
+X range: [-2.52, 2.16]
+Y range: [-3.44, 4.09]
+Z range: [3.95, 14.48]
+
+
+============================================================
+Cell 32 (markdown): ## 6. Extract Point Colors
+============================================================
+## 6. Extract Point Colors
+
+Get RGB colors for each 3D point from the original image.
+
+============================================================
+Cell 33 (code): # Get colors from the first image
+============================================================
+
+Extracted colors for 435 points
+
+
+============================================================
+Cell 34 (markdown): ## 7. Visualize 3D Point Cloud
+============================================================
+## 7. Visualize 3D Point Cloud
+
+Display the reconstructed point cloud with camera positions.
+
+============================================================
+Cell 35 (code): from mpl_toolkits.mplot3d import Axes3D
+============================================================
+
+
+============================================================
+Cell 36 (markdown): ## 8. Save Point Cloud as PLY File
+============================================================
+## 8. Save Point Cloud as PLY File
+
+Export the final 3D point cloud to PLY format.
+
+============================================================
+Cell 37 (code): def save_ply(filename, points, colors):
+============================================================
+Point cloud saved to 'reconstruction.ply'
+
+============================================================
+✓ Week 2 Assignment Complete!
+============================================================
+
+Output file: reconstruction.ply
+Total 3D points: 435
+
+You can view the PLY file using:
+  - MeshLab (http://www.meshlab.net/)
+  - CloudCompare (https://www.cloudcompare.org/)
+  - Online viewer: https://3dviewer.net/
+
+
+============================================================
+Cell 38 (code): # %% NEW CELL - Multi-View Reconstruction
+============================================================
+
+
+============================================================
+Cell 39 (code): # Save all cell outputs to text file
+============================================================
+Outputs saved to 'notebook_outputs.txt'
+
+
+============================================================
+Cell 40 (code): # Install: pip install open3d
+============================================================
+[Open3D WARNING] [ViewControl] SetViewPoint() failed because window height and width are not set.
+
