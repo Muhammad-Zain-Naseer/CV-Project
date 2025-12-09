@@ -28,25 +28,6 @@
             height: 100%;
         }
 
-        /* Source Image Overlay */
-        #image-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 10;
-        }
-
-        #source-image {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            opacity: 0.7;
-            transition: opacity 0.5s ease;
-        }
-
         /* Controls Panel */
         #controls {
             position: absolute;
@@ -331,11 +312,6 @@
 <body>
     <div id="container">
         <div id="canvas-container"></div>
-        
-        <!-- Source Image Overlay -->
-        <div id="image-overlay">
-            <img id="source-image" src="" alt="Source View">
-        </div>
 
         <!-- Loading Screen -->
         <div id="loading" style="display: none;">
@@ -365,20 +341,10 @@
                     </label>
                     <input type="file" id="camera-file-input" accept=".json">
                 </div>
-
-                <div class="control-group">
-                    <label>Load Images Folder</label>
-                    <label for="images-folder-input" class="file-input-label">
-                        🖼️ Select Images
-                    </label>
-                    <input type="file" id="images-folder-input" accept="image/*" multiple webkitdirectory directory>
-                </div>
-
                 <div class="info">
                     <strong>Quick Start:</strong><br>
                     1. Load PLY file(s)<br>
-                    2. Load cameras.json<br>
-                    3. Load images folder
+                    2. Load cameras.json
                 </div>
             </div>
 
@@ -417,6 +383,9 @@
             <h3 class="collapsible">📷 Cameras (<span id="camera-count">0</span>)</h3>
             <div class="collapsible-content">
                 <div id="camera-list"></div>
+                <div class="control-group">
+                    <button id="start-tour">Start Tour</button>
+                </div>
             </div>
 
             <!-- VISUALIZATION CONTROLS -->
@@ -424,19 +393,12 @@
             <div class="collapsible-content">
                 <div class="control-group">
                     <label>Point Size</label>
-                    <input type="range" id="point-size" min="0.1" max="0.3" step="0.1" value="0.1">
+                    <input type="range" id="point-size" min="0.1" max="0.3" step="0.01" value="0.1">
                     <small style="color: #888;">Size: <span id="point-size-value">0.1</span></small>
                 </div>
 
                 <div class="control-group">
-                    <label>Image Opacity</label>
-                    <input type="range" id="image-opacity" min="0" max="100" step="5" value="70">
-                    <small style="color: #888;">Opacity: <span id="opacity-value">70</span>%</small>
-                </div>
-
-                <div class="control-group">
                     <button id="toggle-cameras">Show Camera Helpers</button>
-                    <button id="toggle-image">Hide Source Image</button>
                     <button id="reset-view">Reset Camera View</button>
                 </div>
             </div>
@@ -448,10 +410,8 @@
                 • Scroll: Zoom<br>
                 <br>
                 <strong>Keyboard:</strong><br>
-                • 0: Point cloud only (no image)<br>
                 • 1-9: Jump to camera<br>
-                • H: Toggle helpers<br>
-                • I: Toggle image
+                • H: Toggle helpers
             </div>
         </div>
 
@@ -487,15 +447,39 @@
         let currentCameraIndex = 0;
         let isTransitioning = false;
         let selectedPlyIndex = -1;
-        let loadedImages = {};  // Store loaded images
         let viewGraph = null;  // View graph for camera navigation
+        let tourTimer = null;
+        let tourPlaying = false;
 
-        const imageOverlay = document.getElementById('source-image');
         const loading = document.getElementById('loading');
+
+        // Helper to align camera orientation with scene (flip 180° on Y to face the cloud)
+        function getCorrectedRotationMatrix(cam) {
+            const rotationMatrix = new THREE.Matrix4();
+            rotationMatrix.set(
+                cam.rotation[0][0], cam.rotation[0][1], cam.rotation[0][2], 0,
+                cam.rotation[1][0], cam.rotation[1][1], cam.rotation[1][2], 0,
+                cam.rotation[2][0], cam.rotation[2][1], cam.rotation[2][2], 0,
+                0, 0, 0, 1
+            );
+
+            // Invert rotation for correct orientation
+            const invertedRotation = rotationMatrix.clone().transpose();
+
+            // Flip 180° around Y so the point cloud is in front (pose frame mismatch fix)
+            const flipY = new THREE.Matrix4().makeRotationY(Math.PI);
+            return invertedRotation.multiply(flipY);
+        }
 
         // ============================================================
         // INITIALIZATION
         // ============================================================
+        function resetCameraView() {
+            camera.position.set(0, 0.5, -2);
+            controls.target.set(0, 0, 0);
+            controls.update();
+        }
+
         function init() {
             // Scene
             scene = new THREE.Scene();
@@ -508,7 +492,7 @@
                 0.01,
                 100
             );
-            camera.position.set(0, 0.5, 2);
+            camera.position.set(0, 0.5, -2);
 
             // Renderer
             renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -531,6 +515,9 @@
             // Additional zoom tweaks
             controls.screenSpacePanning = false;  // Pan in camera space
             controls.keyPanSpeed = 10.0;          // Keyboard pan speed
+            controls.target.set(0, 0, 0);
+            controls.update();
+            resetCameraView();
 
             // Lights
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
@@ -552,6 +539,7 @@
 
             // Setup UI
             setupUI();
+            updateCameraList();
 
             // Start animation
             animate();
@@ -576,12 +564,6 @@
                 if (file) loadCameraJSON(file);
             });
 
-            // Images Folder Input
-            document.getElementById('images-folder-input').addEventListener('change', (e) => {
-                const files = Array.from(e.target.files);
-                loadImagesFolder(files);
-            });
-
             // Point size control
             document.getElementById('point-size').addEventListener('input', (e) => {
                 const size = parseFloat(e.target.value);
@@ -591,13 +573,6 @@
                 document.getElementById('point-size-value').textContent = size;
             });
 
-            // Image opacity control
-            document.getElementById('image-opacity').addEventListener('input', (e) => {
-                const opacity = parseInt(e.target.value) / 100;
-                imageOverlay.style.opacity = opacity;
-                document.getElementById('opacity-value').textContent = e.target.value;
-            });
-
             // Toggle cameras
             document.getElementById('toggle-cameras').addEventListener('click', () => {
                 cameraHelpers.forEach(helper => {
@@ -605,19 +580,18 @@
                 });
             });
 
-            // Toggle image
-            let imageVisible = true;
-            document.getElementById('toggle-image').addEventListener('click', (e) => {
-                imageVisible = !imageVisible;
-                document.getElementById('image-overlay').style.display = imageVisible ? 'block' : 'none';
-                e.target.textContent = imageVisible ? 'Hide Source Image' : 'Show Source Image';
+            // Tour playback
+            document.getElementById('start-tour').addEventListener('click', () => {
+                if (tourPlaying) {
+                    stopTour();
+                } else {
+                    startTour();
+                }
             });
 
             // Reset view
             document.getElementById('reset-view').addEventListener('click', () => {
-                camera.position.set(0, 0.5, 2);
-                controls.target.set(0, 0, 0);
-                controls.update();
+                resetCameraView();
             });
 
             // Transform controls
@@ -669,6 +643,9 @@
                 };
 
                 pointClouds.push(plyData);
+                if (pointClouds.length === 1) {
+                    focusCameraOnGeometry(geometry);
+                }
                 updatePLYList();
                 updateStats();
                 hideLoading();
@@ -687,8 +664,11 @@
                 try {
                     cameraData = JSON.parse(e.target.result);
                     console.log('Loaded camera data:', cameraData);
+                    stopTour();
+                    currentCameraIndex = 0;
                     
                     createCameraHelpers();
+                    buildViewGraph();
                     updateCameraList();
                     
                     if (cameraData.cameras.length > 0) {
@@ -703,30 +683,6 @@
             };
 
             reader.readAsText(file);
-        }
-
-        function loadImagesFolder(files) {
-            showLoading(`Loading ${files.length} images...`);
-            
-            let loaded = 0;
-            files.forEach(file => {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    loadedImages[file.name] = e.target.result;
-                    loaded++;
-                    
-                    if (loaded === files.length) {
-                        console.log(`Loaded ${loaded} images`);
-                        hideLoading();
-                        
-                        // Try to show first image if cameras are loaded
-                        if (cameraData && cameraData.cameras.length > 0) {
-                            updateSourceImage(0);
-                        }
-                    }
-                };
-                reader.readAsDataURL(file);
-            });
         }
 
         // ============================================================
@@ -778,6 +734,24 @@
                 item.appendChild(controls);
                 list.appendChild(item);
             });
+        }
+
+        function focusCameraOnGeometry(geometry) {
+            if (!geometry || !geometry.attributes?.position) return;
+
+            geometry.computeBoundingBox();
+            const box = geometry.boundingBox;
+            if (!box) return;
+
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            const radius = size.length() * 0.5 || 1;
+            const offset = Math.max(radius * 1.2, 1);
+            const viewOffset = new THREE.Vector3(0, offset * 0.5, -offset);
+
+            camera.position.copy(center.clone().add(viewOffset));
+            controls.target.copy(center);
+            controls.update();
         }
 
         function selectPLYForTransform(index) {
@@ -902,20 +876,10 @@
                 const group = new THREE.Group();
 
                 const center = new THREE.Vector3(...cam.center);
-
-                const rotationMatrix = new THREE.Matrix4();
-                rotationMatrix.set(
-                    cam.rotation[0][0], cam.rotation[0][1], cam.rotation[0][2], 0,
-                    cam.rotation[1][0], cam.rotation[1][1], cam.rotation[1][2], 0,
-                    cam.rotation[2][0], cam.rotation[2][1], cam.rotation[2][2], 0,
-                    0, 0, 0, 1
-                );
-
-                // Invert rotation for correct orientation
-                const invertedRotation = rotationMatrix.clone().transpose();
+                const correctedRotation = getCorrectedRotationMatrix(cam);
 
                 group.position.copy(center);
-                group.quaternion.setFromRotationMatrix(invertedRotation);
+                group.quaternion.setFromRotationMatrix(correctedRotation);
 
                 // Sphere marker
                 const sphereGeometry = new THREE.SphereGeometry(0.15, 16, 16);
@@ -948,6 +912,7 @@
             });
         }
 
+        
         function updateCameraList() {
             const list = document.getElementById('camera-list');
             const count = document.getElementById('camera-count');
@@ -955,61 +920,53 @@
             if (!cameraData) {
                 count.textContent = '0';
                 list.innerHTML = '<div class="info">No cameras loaded</div>';
+                const tourBtn = document.getElementById('start-tour');
+                if (tourBtn) {
+                    tourBtn.disabled = true;
+                    stopTour();
+                    setTourButtonLabel();
+                }
                 return;
             }
 
             count.textContent = cameraData.cameras.length;
             list.innerHTML = '';
-
-            // Add "None" option to hide all images
-            const noneButton = document.createElement('button');
-            noneButton.className = 'camera-button';
-            noneButton.id = 'camera-none-button';
-            noneButton.textContent = '🚫 None (Point Cloud Only)';
-            noneButton.onclick = () => clearImageOverlay();
-            list.appendChild(noneButton);
+            const tourBtn = document.getElementById('start-tour');
+            if (tourBtn) tourBtn.disabled = cameraData.cameras.length === 0;
+            if (cameraData.cameras.length === 0) {
+                stopTour();
+                setTourButtonLabel();
+            }
 
             cameraData.cameras.forEach((cam, index) => {
                 const button = document.createElement('button');
+                const label = cam.name || cam.id || `Pose ${index}`;
                 button.className = 'camera-button';
-                button.textContent = `Camera ${index}: ${cam.image}`;
-                button.onclick = () => jumpToCamera(index);
+                button.textContent = `Camera ${index}: ${label}`;
+                button.onclick = () => {
+                    if (tourPlaying) stopTour();
+                    jumpToCamera(index);
+                };
                 list.appendChild(button);
             });
 
             updateCameraButtons();
         }
-
         function jumpToCamera(index, animate = true) {
             if (!cameraData || index >= cameraData.cameras.length) return;
 
             const cam = cameraData.cameras[index];
             currentCameraIndex = index;
 
-            // Update source image
-            updateSourceImage(index);
-
             const targetPosition = new THREE.Vector3(...cam.center);
 
-            // Create rotation matrix from camera rotation
-            const rotationMatrix = new THREE.Matrix4();
-            rotationMatrix.set(
-                cam.rotation[0][0], cam.rotation[0][1], cam.rotation[0][2], 0,
-                cam.rotation[1][0], cam.rotation[1][1], cam.rotation[1][2], 0,
-                cam.rotation[2][0], cam.rotation[2][1], cam.rotation[2][2], 0,
-                0, 0, 0, 1
-            );
-
-            // IMPORTANT: Invert the rotation to face TOWARDS the scene (not away)
-            // The camera's -Z axis should point toward the scene
-            const invertedRotation = rotationMatrix.clone();
-            invertedRotation.transpose(); // Transpose = inverse for rotation matrices
+            const correctedRotation = getCorrectedRotationMatrix(cam);
 
             if (animate && !isTransitioning) {
-                smoothTransitionToCamera(targetPosition, invertedRotation);
+                smoothTransitionToCamera(targetPosition, correctedRotation);
             } else {
                 camera.position.copy(targetPosition);
-                camera.quaternion.setFromRotationMatrix(invertedRotation);
+                camera.quaternion.setFromRotationMatrix(correctedRotation);
 
                 // Set look-at target in front of camera
                 const viewDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -1020,18 +977,35 @@
             updateCameraButtons();
         }
 
-        function updateSourceImage(cameraIndex) {
-            if (!cameraData) return;
-            
-            const cam = cameraData.cameras[cameraIndex];
-            const imageName = cam.image;
-            
-            if (loadedImages[imageName]) {
-                imageOverlay.src = loadedImages[imageName];
-            } else {
-                // Try loading from default location
-                imageOverlay.src = 'images-2/' + imageName;
+        function setTourButtonLabel() {
+            const btn = document.getElementById('start-tour');
+            if (!btn) return;
+            btn.textContent = tourPlaying ? 'Stop Tour' : 'Start Tour';
+        }
+
+        function startTour() {
+            if (!cameraData || cameraData.cameras.length === 0) return;
+
+            stopTour();
+            tourPlaying = true;
+            setTourButtonLabel();
+
+            let index = currentCameraIndex || 0;
+            jumpToCamera(index);
+
+            tourTimer = setInterval(() => {
+                index = (index + 1) % cameraData.cameras.length;
+                jumpToCamera(index);
+            }, 2500);
+        }
+
+        function stopTour() {
+            if (tourTimer) {
+                clearInterval(tourTimer);
+                tourTimer = null;
             }
+            tourPlaying = false;
+            setTourButtonLabel();
         }
 
         function smoothTransitionToCamera(targetPosition, targetRotation) {
@@ -1043,7 +1017,6 @@
 
             const duration = 1000;
             const startTime = Date.now();
-            const startOpacity = parseFloat(imageOverlay.style.opacity || 0.7);
 
             function animateTransition() {
                 const elapsed = Date.now() - startTime;
@@ -1053,12 +1026,6 @@
                 camera.position.lerpVectors(startPosition, targetPosition, eased);
                 camera.quaternion.slerpQuaternions(startQuaternion, targetQuaternion, eased);
 
-                if (t < 0.5) {
-                    imageOverlay.style.opacity = startOpacity * (1 - t * 2);
-                } else {
-                    imageOverlay.style.opacity = startOpacity * ((t - 0.5) * 2);
-                }
-
                 controls.target.copy(camera.position).add(
                     new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion)
                 );
@@ -1067,38 +1034,18 @@
                     requestAnimationFrame(animateTransition);
                 } else {
                     isTransitioning = false;
-                    imageOverlay.style.opacity = startOpacity;
                 }
             }
 
             animateTransition();
         }
 
+        
         function updateCameraButtons() {
             const buttons = document.querySelectorAll('.camera-button');
             buttons.forEach((btn, index) => {
-                // Skip the "None" button (first button)
-                if (index === 0) {
-                    btn.classList.toggle('active', currentCameraIndex === -1);
-                } else {
-                    btn.classList.toggle('active', index - 1 === currentCameraIndex);
-                }
+                btn.classList.toggle('active', index === currentCameraIndex);
             });
-        }
-
-        function clearImageOverlay() {
-            // Set camera index to -1 to indicate no camera selected
-            currentCameraIndex = -1;
-
-            // Hide the image overlay
-            imageOverlay.src = '';
-            imageOverlay.style.opacity = '0';
-
-            // Update button states
-            updateCameraButtons();
-            updateStats();
-
-            console.log('🚫 Image overlay cleared - Point cloud only mode');
         }
 
         // ============================================================
@@ -1114,12 +1061,8 @@
         }
 
         function updateStats() {
-            if (currentCameraIndex === -1) {
-                document.getElementById('current-camera').textContent = 'None (Point Cloud Only)';
-            } else {
-                document.getElementById('current-camera').textContent =
-                    cameraData ? `Camera ${currentCameraIndex}` : '-';
-            }
+            document.getElementById('current-camera').textContent =
+                cameraData ? `Camera ${currentCameraIndex}` : '-';
 
             document.getElementById('total-cameras').textContent =
                 cameraData ? cameraData.cameras.length : '-';
@@ -1132,15 +1075,11 @@
         function handleKeyboard(e) {
             if (!cameraData) return;
 
-            // 0 key for "None" (Point Cloud Only)
-            if (e.key === '0') {
-                clearImageOverlay();
-            }
-
             // Number keys for cameras
             if (e.key >= '1' && e.key <= '9') {
                 const index = parseInt(e.key) - 1;
                 if (index < cameraData.cameras.length) {
+                    if (tourPlaying) stopTour();
                     jumpToCamera(index);
                 }
             }
@@ -1152,11 +1091,6 @@
                 });
             }
 
-            // I for image
-            if (e.key === 'i' || e.key === 'I') {
-                const overlay = document.getElementById('image-overlay');
-                overlay.style.display = overlay.style.display === 'none' ? 'block' : 'none';
-            }
         }
 
         function onWindowResize() {
@@ -1224,6 +1158,9 @@
                         };
 
                         pointClouds.push(plyData);
+                        if (pointClouds.length === 1) {
+                            focusCameraOnGeometry(geometry);
+                        }
                         updatePLYList();
                         updateStats();
 
@@ -1252,6 +1189,8 @@
                     .then(data => {
                         cameraData = data;
                         console.log('✅ Loaded camera data:', cameraData);
+                        stopTour();
+                        currentCameraIndex = 0;
 
                         createCameraHelpers();
                         buildViewGraph();
@@ -1307,13 +1246,7 @@
                 const camA = cameraData.cameras[i];
 
                 // Get camera A's viewing direction (forward vector = -Z axis after rotation)
-                const rotMatA = new THREE.Matrix4();
-                rotMatA.set(
-                    camA.rotation[0][0], camA.rotation[0][1], camA.rotation[0][2], 0,
-                    camA.rotation[1][0], camA.rotation[1][1], camA.rotation[1][2], 0,
-                    camA.rotation[2][0], camA.rotation[2][1], camA.rotation[2][2], 0,
-                    0, 0, 0, 1
-                );
+                const rotMatA = getCorrectedRotationMatrix(camA);
                 const viewDirA = new THREE.Vector3(0, 0, -1).applyMatrix4(rotMatA).normalize();
 
                 for (let j = 0; j < viewGraph.nodes.length; j++) {
@@ -1327,13 +1260,7 @@
 
                     if (distance < MAX_DISTANCE) {
                         // Get camera B's viewing direction
-                        const rotMatB = new THREE.Matrix4();
-                        rotMatB.set(
-                            camB.rotation[0][0], camB.rotation[0][1], camB.rotation[0][2], 0,
-                            camB.rotation[1][0], camB.rotation[1][1], camB.rotation[1][2], 0,
-                            camB.rotation[2][0], camB.rotation[2][1], camB.rotation[2][2], 0,
-                            0, 0, 0, 1
-                        );
+                        const rotMatB = getCorrectedRotationMatrix(camB);
                         const viewDirB = new THREE.Vector3(0, 0, -1).applyMatrix4(rotMatB).normalize();
 
                         // Calculate viewing direction similarity
