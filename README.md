@@ -1,7 +1,11 @@
 # CV-Project – Quick Start
 
 1) Open VS Code in this folder.
-2) Serve the Three.js app:
+2) Install a simple server globally (only once):
+```
+npm install -g http-server
+```
+3) Serve the Three.js app:
 ```
 npx http-server . -p 8000
 ```
