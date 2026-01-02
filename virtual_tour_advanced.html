@@ -260,6 +260,33 @@
             border-radius: 10px;
         }
 
+        /* Image Cross-Fade Overlay */
+        #image-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 50;
+        }
+
+        .camera-image {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0;
+            transition: opacity 0.8s ease-in-out;
+            pointer-events: none;
+        }
+
+        .camera-image.active {
+            opacity: 1;
+        }
+
         .spinner {
             border: 4px solid rgba(255, 255, 255, 0.3);
             border-top: 4px solid white;
@@ -313,6 +340,9 @@
     <div id="container">
         <div id="canvas-container"></div>
 
+        <!-- Image Cross-Fade Overlay -->
+        <div id="image-overlay"></div>
+
         <!-- Loading Screen -->
         <div id="loading" style="display: none;">
             <div class="spinner"></div>
@@ -341,10 +371,20 @@
                     </label>
                     <input type="file" id="camera-file-input" accept=".json">
                 </div>
+
+                <div class="control-group">
+                    <label>Load Camera Images (optional)</label>
+                    <label for="images-folder-input" class="file-input-label">
+                        🖼️ Load Images Folder
+                    </label>
+                    <input type="file" id="images-folder-input" accept="image/*" multiple webkitdirectory directory>
+                </div>
+
                 <div class="info">
                     <strong>Quick Start:</strong><br>
                     1. Load PLY file(s)<br>
-                    2. Load cameras.json
+                    2. Load cameras.json<br>
+                    3. Load images folder (optional for cross-fade)
                 </div>
             </div>
 
@@ -385,6 +425,9 @@
                 <div id="camera-list"></div>
                 <div class="control-group">
                     <button id="start-tour">Start Tour</button>
+                </div>
+                <div class="toggles">
+                    <label><input type="checkbox" id="toggle-graph-nav" checked /> Graph-based Navigation</label>
                 </div>
             </div>
 
@@ -450,8 +493,12 @@
         let viewGraph = null;  // View graph for camera navigation
         let tourTimer = null;
         let tourPlaying = false;
+        let cameraImages = {};  // Map of camera index to image URL
+        let activeImageElements = [];  // Currently visible image elements for cross-fade
+        let useGraphNavigation = true;  // Toggle for graph-based vs sequential navigation
 
         const loading = document.getElementById('loading');
+        const imageOverlay = document.getElementById('image-overlay');
 
         // Helper to align camera orientation with scene (flip 180° on Y to face the cloud)
         function getCorrectedRotationMatrix(cam) {
@@ -564,6 +611,12 @@
                 if (file) loadCameraJSON(file);
             });
 
+            // Images Folder Input
+            document.getElementById('images-folder-input').addEventListener('change', (e) => {
+                const files = Array.from(e.target.files);
+                if (files.length > 0) loadCameraImages(files);
+            });
+
             // Point size control
             document.getElementById('point-size').addEventListener('input', (e) => {
                 const size = parseFloat(e.target.value);
@@ -578,6 +631,12 @@
                 cameraHelpers.forEach(helper => {
                     helper.visible = !helper.visible;
                 });
+            });
+
+            // Toggle graph navigation
+            document.getElementById('toggle-graph-nav').addEventListener('change', (e) => {
+                useGraphNavigation = e.target.checked;
+                console.log(`Graph-based navigation: ${useGraphNavigation ? 'ENABLED' : 'DISABLED'}`);
             });
 
             // Tour playback
@@ -683,6 +742,62 @@
             };
 
             reader.readAsText(file);
+        }
+
+        // ============================================================
+        // IMAGE LOADING & CROSS-FADE
+        // ============================================================
+        function loadCameraImages(files) {
+            showLoading('Loading camera images...');
+            cameraImages = {};
+
+            files.forEach(file => {
+                // Extract number from filename (e.g., "000.jpg" -> 0, "001.png" -> 1)
+                const match = file.name.match(/(\d+)/);
+                if (match) {
+                    const index = parseInt(match[1], 10);
+                    const url = URL.createObjectURL(file);
+                    cameraImages[index] = url;
+                }
+            });
+
+            console.log(`✅ Loaded ${Object.keys(cameraImages).length} camera images`);
+            hideLoading();
+            alert(`Loaded ${Object.keys(cameraImages).length} camera images for cross-fade`);
+        }
+
+        function crossFadeToCamera(fromIndex, toIndex, duration = 1000) {
+            // Remove old images
+            activeImageElements.forEach(img => {
+                img.classList.remove('active');
+                setTimeout(() => {
+                    if (img.parentNode) img.parentNode.removeChild(img);
+                }, 1000);
+            });
+            activeImageElements = [];
+
+            // Add new image if available
+            if (cameraImages[toIndex]) {
+                const img = document.createElement('img');
+                img.src = cameraImages[toIndex];
+                img.className = 'camera-image';
+                imageOverlay.appendChild(img);
+
+                // Trigger fade-in
+                setTimeout(() => {
+                    img.classList.add('active');
+                }, 50);
+
+                activeImageElements.push(img);
+
+                // Auto-fade out after staying at the camera
+                setTimeout(() => {
+                    img.classList.remove('active');
+                    setTimeout(() => {
+                        if (img.parentNode) img.parentNode.removeChild(img);
+                    }, 1000);
+                }, duration + 2000);
+            }
         }
 
         // ============================================================
@@ -810,8 +925,30 @@
             // Apply to group
             ply.group.matrix.copy(matrix);
             ply.group.matrixAutoUpdate = false;
-            
+
+            // Update camera poses that belong to this PLY
+            updateCameraPosesForTransformedPLY(selectedPlyIndex, matrix);
+
             console.log(`Applied transform to ${ply.name}`);
+        }
+
+        function updateCameraPosesForTransformedPLY(plyIndex, transformMatrix) {
+            if (!cameraData || !cameraData.cameras) return;
+
+            // Note: This assumes cameras in the JSON are ordered/grouped by their associated PLY
+            // For a more robust solution, the JSON should include a "plyIndex" field for each camera
+
+            console.log(`Updating camera poses for PLY ${plyIndex} with transform matrix`);
+
+            // Update camera helpers to use world positions
+            cameraHelpers.forEach((helper, index) => {
+                // Get the world position of the helper
+                const worldPos = new THREE.Vector3();
+                helper.getWorldPosition(worldPos);
+
+                // Update the camera data center to reflect world position
+                cameraData.cameras[index].worldCenter = worldPos.toArray();
+            });
         }
 
         function resetTransform() {
@@ -955,12 +1092,28 @@
         function jumpToCamera(index, animate = true) {
             if (!cameraData || index >= cameraData.cameras.length) return;
 
+            const previousIndex = currentCameraIndex;
             const cam = cameraData.cameras[index];
             currentCameraIndex = index;
 
-            const targetPosition = new THREE.Vector3(...cam.center);
+            // Use world position if available (for transformed cameras), otherwise use stored center
+            let targetPosition;
+            if (cam.worldCenter) {
+                targetPosition = new THREE.Vector3(...cam.worldCenter);
+            } else if (cameraHelpers[index]) {
+                // Query world position from the camera helper
+                targetPosition = new THREE.Vector3();
+                cameraHelpers[index].getWorldPosition(targetPosition);
+            } else {
+                targetPosition = new THREE.Vector3(...cam.center);
+            }
 
             const correctedRotation = getCorrectedRotationMatrix(cam);
+
+            // Trigger image cross-fade
+            if (Object.keys(cameraImages).length > 0) {
+                crossFadeToCamera(previousIndex, index, 1000);
+            }
 
             if (animate && !isTransitioning) {
                 smoothTransitionToCamera(targetPosition, correctedRotation);
@@ -983,6 +1136,9 @@
             btn.textContent = tourPlaying ? 'Stop Tour' : 'Start Tour';
         }
 
+        let visitedCameras = new Set();
+        let previousCameraIndex = -1;
+
         function startTour() {
             if (!cameraData || cameraData.cameras.length === 0) return;
 
@@ -990,11 +1146,64 @@
             tourPlaying = true;
             setTourButtonLabel();
 
+            // Reset visited tracking
+            visitedCameras.clear();
+            previousCameraIndex = -1;
+
             let index = currentCameraIndex || 0;
             jumpToCamera(index);
 
             tourTimer = setInterval(() => {
-                index = (index + 1) % cameraData.cameras.length;
+                visitedCameras.add(index);
+
+                // Use graph-based navigation if enabled and view graph exists
+                if (useGraphNavigation && viewGraph && viewGraph.nodes[index]) {
+                    const currentNode = viewGraph.nodes[index];
+
+                    if (currentNode.neighbors.length > 0) {
+                        // Find the best next neighbor:
+                        // 1. Prefer unvisited neighbors
+                        // 2. Don't backtrack to previous camera
+                        // 3. Choose closest unvisited, or any if all visited
+
+                        const unvisitedNeighbors = currentNode.neighbors.filter(
+                            n => !visitedCameras.has(n.nodeId) && n.nodeId !== previousCameraIndex
+                        );
+
+                        let nextIndex;
+                        if (unvisitedNeighbors.length > 0) {
+                            // Pick closest unvisited neighbor
+                            nextIndex = unvisitedNeighbors[0].nodeId;
+                        } else {
+                            // All neighbors visited, pick any except previous
+                            const nonBacktrackNeighbors = currentNode.neighbors.filter(
+                                n => n.nodeId !== previousCameraIndex
+                            );
+                            if (nonBacktrackNeighbors.length > 0) {
+                                nextIndex = nonBacktrackNeighbors[0].nodeId;
+                            } else {
+                                // Only option is to backtrack or reset
+                                if (visitedCameras.size >= cameraData.cameras.length) {
+                                    visitedCameras.clear(); // Reset for new tour cycle
+                                }
+                                nextIndex = currentNode.neighbors[0].nodeId;
+                            }
+                        }
+
+                        previousCameraIndex = index;
+                        index = nextIndex;
+                        console.log(`Graph navigation: Camera ${previousCameraIndex} -> ${index} (${visitedCameras.size}/${cameraData.cameras.length} visited)`);
+                    } else {
+                        // No neighbors, fall back to sequential
+                        previousCameraIndex = index;
+                        index = (index + 1) % cameraData.cameras.length;
+                    }
+                } else {
+                    // Sequential navigation
+                    previousCameraIndex = index;
+                    index = (index + 1) % cameraData.cameras.length;
+                }
+
                 jumpToCamera(index);
             }, 2500);
         }
